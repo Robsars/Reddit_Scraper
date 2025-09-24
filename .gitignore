@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.tools/
+.env
+*.db
+*.db-journal
+playwright-report/
+test-results/
+coverage/
+.DS_Store
+*.log
+

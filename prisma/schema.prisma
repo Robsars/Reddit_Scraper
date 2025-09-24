@@ -1,0 +1,104 @@
+// Using SQLite locally for tests; schema is portable to Postgres
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  createdAt DateTime @default(now())
+  accounts  Account[]
+  sessions  Session[]
+  collections Collection[]
+  savedPosts SavedPost[]
+  tags       Tag[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  provider          String
+  type              String
+  providerAccountId String
+  access_token      String?
+  refresh_token     String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Collection {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  userId    String?  // optional for v1, until Auth wiring is complete
+  user      User?    @relation(fields: [userId], references: [id])
+  items     SavedPost[]
+
+  @@unique([userId, name])
+}
+
+model SavedPost {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  externalId   String
+  title        String
+  subreddit    String
+  author       String
+  url          String
+  score        Int
+  createdUtc   Int
+  nsfw         Boolean
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  tags        SavedPostTag[]
+}
+
+model Tag {
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+  name   String
+
+  @@unique([userId, name])
+  posts  SavedPostTag[]
+}
+
+model SavedPostTag {
+  savedPostId String
+  tagId       String
+  savedPost   SavedPost @relation(fields: [savedPostId], references: [id], onDelete: Cascade)
+  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([savedPostId, tagId])
+}
