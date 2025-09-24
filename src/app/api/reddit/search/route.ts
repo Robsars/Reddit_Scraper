@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { auth } from '@/lib/auth'
+import { searchReddit } from '@/lib/reddit'
 
 const SearchBody = z.object({
   subreddits: z.array(z.string().min(1)).min(1),
@@ -14,31 +16,6 @@ type PostSummary = {
   score: number, createdUtc: number, numComments: number, nsfw: boolean, flair?: string
 }
 
-type CacheEntry = { expiresAt: number, data: { items: PostSummary[], nextPage?: number } }
-const cache = new Map<string, CacheEntry>()
-const TTL_MS = 90_000
-
-function keyOf(p: z.infer<typeof SearchBody>) {
-  return JSON.stringify([p.subreddits.sort(), p.query || '', p.sort, p.time, p.page])
-}
-
-function mockFetch(p: z.infer<typeof SearchBody>): { items: PostSummary[], nextPage?: number } {
-  const now = Math.floor(Date.now()/1000)
-  const items: PostSummary[] = Array.from({ length: 10 }).map((_, i) => ({
-    id: `${p.subreddits[0]}_${p.page}_${i}`,
-    title: `[Mock] ${p.query || 'Post'} #${i+1} in r/${p.subreddits[0]}`,
-    author: 'mock_user',
-    subreddit: p.subreddits[0],
-    url: `https://reddit.com/r/${p.subreddits[0]}/comments/mock_${i}`,
-    score: 100 - i,
-    createdUtc: now - i * 3600,
-    numComments: i * 3,
-    nsfw: false,
-    flair: i % 3 === 0 ? 'Discussion' : undefined,
-  }))
-  return { items, nextPage: p.page + 1 }
-}
-
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const parsed = SearchBody.safeParse(body)
@@ -46,13 +23,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid body', issues: parsed.error.issues }, { status: 400 })
   }
   const p = parsed.data
-  const key = keyOf(p)
-  const hit = cache.get(key)
-  if (hit && hit.expiresAt > Date.now()) {
-    return NextResponse.json({ ...hit.data, cached: true })
+  const session = await auth()
+  const userId = (session?.user as any)?.id as string | undefined
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const result = await searchReddit(userId, {
+      subreddits: p.subreddits,
+      query: p.query,
+      sort: p.sort,
+      time: p.time,
+    })
+    return NextResponse.json({ items: result.items, nextPageToken: result.nextPageToken, cached: result.cached })
+  } catch (e: any) {
+    const status = e.status || 500
+    const resp: any = { error: e.message || 'Search failed' }
+    if (e.retryAfter) resp.retryAfter = e.retryAfter
+    return NextResponse.json(resp, { status })
   }
-  const data = mockFetch(p)
-  cache.set(key, { expiresAt: Date.now() + TTL_MS, data })
-  return NextResponse.json({ ...data, cached: false })
 }
-
