@@ -70,8 +70,41 @@ if /I "%PKG%"=="pnpm" (
 )
 
 call :log "Step 5: prisma generate & migrate"
-call npx prisma generate || goto :pause_fail
-call npx prisma migrate dev --name init --skip-seed || goto :pause_fail
+REM Prefer binary engine on Windows to reduce DLL locking
+set PRISMA_CLIENT_ENGINE_TYPE=binary
+call :log "Using PRISMA_CLIENT_ENGINE_TYPE=%PRISMA_CLIENT_ENGINE_TYPE%"
+set NPXCMD=npx
+where npx >NUL 2>&1 || set NPXCMD=npx.cmd
+
+call :log "Cleaning Prisma cache"
+if exist "node_modules\.prisma" (
+  attrib -r "node_modules\.prisma\*.*" /s >NUL 2>&1
+  rmdir /S /Q "node_modules\.prisma" >NUL 2>&1
+)
+
+set RETRIES=0
+:gen_try
+call %NPXCMD% prisma generate
+if "%ERRORLEVEL%"=="0" goto gen_ok
+set /a RETRIES=%RETRIES%+1 >NUL
+if %RETRIES% GEQ 5 (
+  call :log "ERROR: prisma generate failed after %RETRIES% attempts"
+  goto :pause_fail
+)
+call :log "generate failed (attempt %RETRIES%), cleaning and retrying..."
+if exist "node_modules\.prisma" (
+  attrib -r "node_modules\.prisma\*.*" /s >NUL 2>&1
+  rmdir /S /Q "node_modules\.prisma" >NUL 2>&1
+)
+timeout /t 2 >NUL
+goto gen_try
+:gen_ok
+
+call %NPXCMD% prisma migrate dev --name init --skip-seed
+if not "%ERRORLEVEL%"=="0" (
+  call :log "migrate failed, attempting prisma db push"
+  call %NPXCMD% prisma db push || goto :pause_fail
+)
 
 call :log "Step 6: start dev server"
 echo Starting dev server on http://localhost:3000
